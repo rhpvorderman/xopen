@@ -2,11 +2,13 @@ import io
 import os
 import random
 import signal
+import sys
 import time
 import pytest
 from pathlib import Path
 
-from xopen import xopen, PipedGzipReader, PipedGzipWriter, _can_read_concatenated_gz
+from xopen import xopen, PipedGzipReader, PipedGzipWriter, \
+    _can_read_concatenated_gz, _MAX_PIPE_SIZE
 
 
 extensions = ["", ".gz", ".bz2"]
@@ -16,6 +18,13 @@ try:
     extensions.append(".xz")
 except ImportError:
     lzma = None
+
+try:
+    import fcntl
+    if not hasattr(fcntl, "F_GETPIPE_SZ") and sys.platform == "linux":
+        setattr(fcntl, "F_GETPIPE_SZ", 1032)
+except ImportError:
+    fcntl = None
 
 base = "tests/file.txt"
 files = [base + ext for ext in extensions]
@@ -400,3 +409,14 @@ def test_concatenated_gzip_function():
     assert _can_read_concatenated_gz("gzip") is True
     assert _can_read_concatenated_gz("pigz") is True
     assert _can_read_concatenated_gz("xz") is False
+
+
+@pytest.mark.skipif(
+    not hasattr(fcntl, "F_GETPIPE_SZ") and _MAX_PIPE_SIZE is not None,
+    reason="Pipe size modifications not available on this platform.")
+def test_pipesize_changed(tmpdir):
+    path = Path(str(tmpdir), "hello.gz")
+    with xopen(path, "wb") as f:
+        assert isinstance(f, PipedGzipWriter)
+        assert fcntl.fcntl(f._file.fileno(),
+                           fcntl.F_GETPIPE_SZ) == _MAX_PIPE_SIZE
